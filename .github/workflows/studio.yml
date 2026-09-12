@@ -1,0 +1,40 @@
+name: YuE Studio
+
+on:
+  push:
+    paths: ['studio/**', '.github/workflows/studio.yml']
+  pull_request:
+    paths: ['studio/**', '.github/workflows/studio.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  studio:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: studio/web/package-lock.json
+      - name: Test Studio without models or provider credentials
+        run: python -W error::ResourceWarning -m unittest discover -s studio/tests -p 'test_*.py'
+      - name: Install locked frontend dependencies
+        working-directory: studio/web
+        run: npm ci
+      - name: Build the interface
+        working-directory: studio/web
+        run: npm run build
+      - name: Build and verify the Mac app
+        if: runner.os == 'macOS'
+        run: python studio/macos/build_app.py

@@ -1,0 +1,6 @@
+export type Take = {id:string;status:'queued'|'running'|'complete'|'needs_review'|'failed'|'cancelled';stage:string;created_at:string;duration?:number;audio_url?:string;error?:string;truncated?:boolean|Record<string,boolean>};
+export type Track = {id:string;title:string;artist:string;album:string;style:string;lyrics:string;cot:'full'|'melody'|'off';seed:number|null;abc:string;cover_prompt:string;cover_url?:string;cover_status?:string;cover_error?:string;favorite:boolean;created_at:string;updated_at:string;selected_take_id?:string;takes:Take[]};
+export type Engine = {ready:boolean;status:string;message:string;device:string;python_path:string;model_cached:boolean;runtime_available:boolean};
+export type Settings = {python_path:string;device:string;memory_budget_gib:number;model:string;vae:string;offline:boolean;mode:'local'|'remote';remote_url:string;remote_token?:string};
+export const emptyTrack = ():Track => ({id:'',title:'',artist:'',album:'',style:'',lyrics:'',cot:'full',seed:null,abc:'',cover_prompt:'',favorite:false,created_at:new Date().toISOString(),updated_at:new Date().toISOString(),takes:[]});
+export const draftFields = (t:Track) => ({title:t.title,artist:t.artist,album:t.album,style:t.style,lyrics:t.lyrics,cot:t.cot,seed:t.seed,abc:t.abc,cover_prompt:t.cover_prompt,favorite:t.favorite,selected_take_id:t.selected_take_id});

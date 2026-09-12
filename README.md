@@ -1,5 +1,7 @@
 > Looking for the original YuE? Its code, documentation, and license are preserved on the **[YuE-v1 branch](https://github.com/multimodal-art-projection/YuE/tree/YuE-v1)**.
 
+> **Mac interface in this fork:** [YuE Studio](studio/README.md) adds a native Mac window, local song library, lyrics and score editor, alternate takes, playback, album artwork, and exports. The interface opens independently of the separately configured music runtime.
+
 <p align="center">
   <img src="assets/logo.png" alt="YuE" width="150" />
 </p>
@@ -52,7 +54,7 @@ The staged Python API exposes `plan()` → `generate_semantic()` → `synthesize
 **Linux · Python 3.12 · NVIDIA GPU with BF16 support and 24 GB VRAM.** YuE2 produces 48 kHz stereo audio without quantization. Model files download from Hugging Face on first use.
 
 ```bash
-git clone https://github.com/multimodal-art-projection/YuE.git
+git clone https://github.com/BureauObscura/YuE.git
 cd YuE
 python3.12 -m venv .venv
 source .venv/bin/activate
