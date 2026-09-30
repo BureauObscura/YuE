@@ -435,6 +435,9 @@ class Handler(BaseHTTPRequestHandler):
 def default_data_dir():
     if sys.platform == "darwin":
         return Path.home() / "Library/Application Support/YuE Studio"
+    if os.name == "nt":
+        local_app_data = os.environ.get("LOCALAPPDATA")
+        return (Path(local_app_data) if local_app_data else Path.home() / "AppData/Local") / "YuE Studio"
     return Path(os.environ.get("XDG_DATA_HOME", Path.home() / ".local/share")) / "yue-studio"
 
 
@@ -455,12 +458,24 @@ def main(argv=None):
     args.data_dir = args.data_dir.expanduser().resolve()
     args.data_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
     # Two app instances must not overwrite the same JSON library.
-    lockfile = open(args.data_dir / ".studio.lock", "a")
+    lockfile = open(args.data_dir / ".studio.lock", "a+b")
+    lock_kind = None
     try:
-        import fcntl
-        fcntl.flock(lockfile, fcntl.LOCK_EX | fcntl.LOCK_NB)
-    except (ImportError, BlockingIOError):
+        if os.name == "nt":
+            import msvcrt
+            if lockfile.tell() == 0:
+                lockfile.write(b"\0")
+                lockfile.flush()
+            lockfile.seek(0)
+            msvcrt.locking(lockfile.fileno(), msvcrt.LK_NBLCK, 1)
+            lock_kind = "windows"
+        else:
+            import fcntl
+            fcntl.flock(lockfile, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            lock_kind = "posix"
+    except (ImportError, BlockingIOError, OSError):
         print("This Studio library is already open, or file locking is unavailable. Close the other instance before reopening.", file=sys.stderr)
+        lockfile.close()
         return 1
     studio = Studio(args.data_dir, args.web_dir)
     try:
@@ -487,6 +502,11 @@ def main(argv=None):
     finally:
         studio.close()
         server.server_close()
+        if lock_kind == "windows":
+            lockfile.seek(0)
+            msvcrt.locking(lockfile.fileno(), msvcrt.LK_UNLCK, 1)
+        elif lock_kind == "posix":
+            fcntl.flock(lockfile, fcntl.LOCK_UN)
         lockfile.close()
     return 0
 

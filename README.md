@@ -1,6 +1,6 @@
 > Looking for the original YuE? Its code, documentation, and license are preserved on the **[YuE-v1 branch](https://github.com/multimodal-art-projection/YuE/tree/YuE-v1)**.
 
-> **Mac interface in this fork:** [YuE Studio](studio/README.md) adds a native Mac window, local song library, lyrics and score editor, alternate takes, playback, album artwork, and exports. The interface opens independently of the separately configured music runtime.
+> **Windows and Mac interface in this fork:** [YuE Studio](studio/README.md) adds an app-like Windows launcher and native Mac window, plus a local song library, lyrics and score editor, alternate takes, playback, album artwork, and exports. The interface opens independently of the separately configured music runtime.
 
 <p align="center">
   <img src="assets/logo.png" alt="YuE" width="150" />

@@ -2,15 +2,18 @@
 // No music model or paid image provider is used by this test.
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
+const os = require('node:os');
 const path = require('node:path');
 const { chromium } = require(process.env.PLAYWRIGHT_MODULE || 'playwright');
 const base = process.env.STUDIO_TEST_URL || 'http://127.0.0.1:8766';
-const output = process.env.STUDIO_TEST_OUTPUT || '/private/tmp/yue-studio-ui-results';
+const output = process.env.STUDIO_TEST_OUTPUT || path.join(os.tmpdir(),'yue-studio-ui-results');
 fs.mkdirSync(output, {recursive:true});
 function wav(){const rate=24000, samples=rate*3;const data=Buffer.alloc(44+samples*2);data.write('RIFF');data.writeUInt32LE(data.length-8,4);data.write('WAVE',8);data.write('fmt ',12);data.writeUInt32LE(16,16);data.writeUInt16LE(1,20);data.writeUInt16LE(1,22);data.writeUInt32LE(rate,24);data.writeUInt32LE(rate*2,28);data.writeUInt16LE(2,32);data.writeUInt16LE(16,34);data.write('data',36);data.writeUInt32LE(samples*2,40);for(let i=0;i<samples;i++)data.writeInt16LE(Math.round(Math.sin(i*2*Math.PI*220/rate)*1500),44+i*2);return data;}
 async function until(fn){for(let i=0;i<100;i++){const value=await fn();if(value)return value;await new Promise(r=>setTimeout(r,100));}throw new Error('Condition timed out');}
 (async()=>{
- const browser=await chromium.launch({executablePath:process.env.CHROME_PATH||'/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',headless:true});
+ const candidates=process.platform==='win32'?[path.join(process.env['PROGRAMFILES(X86)']||'','Microsoft','Edge','Application','msedge.exe'),path.join(process.env.PROGRAMFILES||'','Microsoft','Edge','Application','msedge.exe'),path.join(process.env.LOCALAPPDATA||'','Microsoft','Edge','Application','msedge.exe')]:['/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'];
+ const executablePath=process.env.CHROME_PATH||candidates.find(candidate=>candidate&&fs.existsSync(candidate));
+ const browser=await chromium.launch({...(executablePath?{executablePath}:{}),headless:true});
  const page=await browser.newPage({viewport:{width:1360,height:1000},deviceScaleFactor:1});
  const errors=[];page.on('pageerror',e=>errors.push(e.message));
  const state=async()=> (await page.request.get(base+'/api/bootstrap')).json();
@@ -34,6 +37,8 @@ async function until(fn){for(let i=0;i<100;i++){const value=await fn();if(value)
   await page.locator('input[type=file]').nth(1).setInputFiles({name:'test-cover.png',mimeType:'image/png',buffer:png});
   track=await until(async()=>{const t=(await state()).tracks.find(t=>t.id===track.id);return t?.cover_url?t:null;});
   const downloadPromise=page.waitForEvent('download');await page.getByRole('link',{name:'Export selected take & artwork'}).click();const download=await downloadPromise;await download.saveAs(path.join(output,'test-export.zip'));
+  await page.getByRole('button',{name:'Open settings',exact:true}).click();await page.getByRole('dialog',{name:'Music engine'}).waitFor();
+  await page.getByLabel('Python executable',{exact:true}).fill(path.join(output,'missing-python.exe'));await page.getByRole('button',{name:'Save & check connection',exact:true}).click();await page.getByText('Setup required',{exact:true}).waitFor();await page.getByRole('button',{name:'Close dialog'}).click();
   await page.getByRole('button',{name:'Generate take',exact:true}).first().click();await page.getByRole('dialog',{name:'Music engine'}).waitFor();
   assert.match(await page.getByRole('dialog').innerText(),/Setup required/);
   assert.equal((await state()).tracks.find(t=>t.id===track.id).takes.length,1);

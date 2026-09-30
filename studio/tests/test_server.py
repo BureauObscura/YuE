@@ -10,6 +10,7 @@ import hashlib
 import http.client
 import io
 import json
+import os
 from pathlib import Path
 import sys
 import tempfile
@@ -22,7 +23,7 @@ import zipfile
 
 SERVER_DIR = Path(__file__).resolve().parents[1] / "server"
 sys.path.insert(0, str(SERVER_DIR))
-from server import Studio, StudioHTTPServer
+from server import Studio, StudioHTTPServer, default_data_dir
 from store import Store, StudioError, audio_type, image_type, decode_upload
 from jobs import JobManager, remote_url
 from worker import cached_model
@@ -60,6 +61,19 @@ class StorageTests(unittest.TestCase):
 
     def tearDown(self):
         self.tmp.cleanup()
+
+    @unittest.skipUnless(os.name == "nt", "Windows defaults")
+    def test_windows_defaults_use_local_app_data_and_venv(self):
+        with tempfile.TemporaryDirectory() as temp:
+            local = Path(temp) / "Local"
+            repo = Path(temp) / "repo"
+            interpreter = repo / ".venv" / "Scripts" / "python.exe"
+            interpreter.parent.mkdir(parents=True)
+            interpreter.touch()
+            with patch.dict(os.environ, {"LOCALAPPDATA": str(local)}):
+                self.assertEqual(default_data_dir(), local / "YuE Studio")
+            store = Store(Path(temp) / "library", repo)
+            self.assertEqual(Path(store.settings()["python_path"]), interpreter)
 
     def test_draft_persists_and_requests_are_frozen(self):
         track = self.store.create({"title": "First", "style": "quiet piano", "lyrics": "Original words", "seed": 12})

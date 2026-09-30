@@ -198,7 +198,7 @@ class JobManager:
                         digest.update(chunk)
                 self.store.update_take(*key, status="needs_review" if truncated else "complete",
                     stage="Complete, review ending" if truncated else "Complete", duration=receipt.get("duration"),
-                    truncated=truncated, audio_url=self.store.media_url(audio), _audio=str(audio.relative_to(self.store.artifacts)),
+                    truncated=truncated, audio_url=self.store.media_url(audio), _audio=audio.relative_to(self.store.artifacts).as_posix(),
                     _mime="audio/flac", _sha256=digest.hexdigest())
             else:
                 error = receipt.get("error") if receipt else None

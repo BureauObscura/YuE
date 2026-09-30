@@ -72,7 +72,8 @@ class GraphAR:
         if attention_backend not in {"auto", "flash", "cudnn", "sdpa"}:
             raise ValueError("attention_backend must be auto, flash, cudnn, or sdpa")
         fused = self.device.type == "cuda" and self.dtype in {torch.bfloat16, torch.float16} and config.head_dim % 8 == 0
-        flash = fused and config.head_dim <= 256 and hasattr(torch.ops.aten, "_flash_attention_forward") and (
+        flash_compiled = bool(getattr(torch.backends.cuda, "is_flash_attention_available", lambda: False)())
+        flash = fused and flash_compiled and config.head_dim <= 256 and hasattr(torch.ops.aten, "_flash_attention_forward") and (
             "seqused_k" in str(torch.ops.aten._flash_attention_forward.default._schema))
         # Torch 2.10 is pinned by the package. Its native variable-length FA
         # accepts GPU effective lengths; the public masked SDPA can select a

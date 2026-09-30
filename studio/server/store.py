@@ -138,8 +138,11 @@ class Store:
         self.lock = threading.RLock()
         self.path = self.root / "studio.json"
         repo = Path(repo_root or Path(__file__).resolve().parents[2])
-        python = repo / ".venv/bin/python"
-        self.defaults = {"python_path": str(python if python.is_file() else sys.executable),
+        python = repo / ".venv" / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
+        fallback_python = Path(sys.executable)
+        if os.name == "nt" and fallback_python.name.lower() == "pythonw.exe":
+            fallback_python = fallback_python.with_name("python.exe")
+        self.defaults = {"python_path": str(python if python.is_file() else fallback_python),
                          "device": "auto", "memory_budget_gib": 12 if sys.platform == "darwin" else 24,
                          "model": str(repo / "models/YuE2-3B") if (repo / "models/YuE2-3B").is_dir() else "m-a-p/YuE2-3B",
                          "vae": str(repo / "models/YuE2-Vae") if (repo / "models/YuE2-Vae").is_dir() else "m-a-p/YuE2-Vae",
@@ -337,14 +340,14 @@ class Store:
                 with open(path, "xb") as stream:
                     stream.write(data)
                 return self.update_take(track_id, take["id"], audio_url=self.media_url(path),
-                                        duration=duration_seconds(data, ext), _audio=str(path.relative_to(self.artifacts)),
+                                        duration=duration_seconds(data, ext), _audio=path.relative_to(self.artifacts).as_posix(),
                                         _mime=mime, _sha256=hashlib.sha256(data).hexdigest())
             except OSError:
                 self.update_take(track_id, take["id"], status="failed", stage="Import failed", error="Unable to save imported audio.")
                 raise
 
     def media_url(self, path):
-        return "/media/" + str(path.relative_to(self.artifacts))
+        return "/media/" + path.relative_to(self.artifacts).as_posix()
 
     def put_cover(self, track_id, data):
         ext, mime = image_type(data)
@@ -358,7 +361,7 @@ class Store:
             with open(path, "xb") as stream:
                 stream.write(data)
             track.update(cover_url=self.media_url(path), cover_status="complete", cover_error=None,
-                         _cover=str(path.relative_to(self.artifacts)), _cover_mime=mime, _cover_metadata=None, updated_at=now())
+                         _cover=path.relative_to(self.artifacts).as_posix(), _cover_mime=mime, _cover_metadata=None, updated_at=now())
             self.save()
             return self.public(track)
 
