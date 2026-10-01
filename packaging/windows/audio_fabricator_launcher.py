@@ -124,6 +124,21 @@ def local_data() -> Path:
     return Path(os.environ.get("LOCALAPPDATA", r"C:\Users\Public\AppData\Local")) / APP_NAME
 
 
+def write_log(log_file, message: str) -> None:
+    timestamp = dt.datetime.now(dt.timezone.utc).isoformat(timespec="seconds")
+    log_file.write(f"[launcher {timestamp}] {message}\r\n".encode("utf-8", errors="replace"))
+
+
+def browser_session_profile(data: Path) -> Path:
+    """Return an isolated Edge profile so the app process cannot be handed off."""
+    sessions = data / "Browser Sessions"
+    sessions.mkdir(parents=True, exist_ok=True)
+    stamp = dt.datetime.now(dt.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    profile = sessions / f"session-{stamp}-{uuid.uuid4().hex[:8]}"
+    profile.mkdir()
+    return profile
+
+
 def show_error(message: str) -> None:
     ctypes.windll.user32.MessageBoxW(None, message, APP_NAME, 0x10)
 
@@ -407,22 +422,31 @@ def main() -> int:
         if splash:
             splash.status("Opening Audio Fabricator…")
         app_url = music_url + "/?theme=dark"
+        # Chromium reuses a process that already owns the same user-data directory.
+        # In that case Popen returns a short-lived handoff process; treating its exit
+        # as the window closing shuts down both local APIs while the page is visible.
+        # A unique session profile gives this launcher a real browser lifetime to own.
+        profile = browser_session_profile(data)
+        write_log(log_file, f"Opening Edge app at {app_url} with isolated profile {profile}")
         app = subprocess.Popen(
             [
-                str(browser), f"--app={app_url}", f"--user-data-dir={data / 'Browser Profile'}",
-                "--no-first-run", "--disable-background-mode", "--disable-sync", "--start-maximized",
+                str(browser), f"--app={app_url}", f"--user-data-dir={profile}", "--new-window",
+                "--no-first-run", "--no-default-browser-check", "--disable-background-mode",
+                "--disable-sync", "--disable-features=msEdgeFirstRunExperience", "--start-maximized",
             ],
             cwd=str(data),
             stdin=subprocess.DEVNULL,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
         )
+        write_log(log_file, f"Edge app process started with PID {app.pid}")
         if splash:
             splash.close()
             splash = None
         while app.poll() is None:
             lifecycle.ensure_running()
             time.sleep(0.5)
+        write_log(log_file, f"Edge app process exited with code {app.returncode}; stopping local engines")
         return 0
     except UserCancelled:
         return 0
