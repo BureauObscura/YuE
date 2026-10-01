@@ -133,6 +133,13 @@ class StorageTests(unittest.TestCase):
         with self.assertRaises(StudioError):
             self.store.take_dir(track["id"], "../bad")
 
+    def test_artifact_paths_do_not_depend_on_resolve(self):
+        track = self.store.create({"style": "test piano", "lyrics": "test line"})
+        take = self.store.new_take(track["id"])
+        expected = self.store.artifacts / track["id"] / "takes" / take["id"]
+        with patch.object(Path, "resolve", side_effect=AssertionError("resolve must not be used")):
+            self.assertEqual(self.store.take_dir(track["id"], take["id"]), expected)
+
     def test_settings_never_persist_token(self):
         self.store.update_settings({"remote_token": "test-secret", "device": "mps"})
         self.assertNotIn("test-secret", self.store.path.read_text())

@@ -1,11 +1,12 @@
 import json
 from pathlib import Path
+from unittest.mock import patch
 import pytest
 import torch
 from yue2.protocol import *
 from yue2.sampling import distribution, window_penalty
 from yue2.cli import request_kwargs
-from yue2.storage import verify_result, write_json, collect_hashes
+from yue2.storage import artifact_path, verify_result, write_json, collect_hashes
 
 
 class Tokenizer:
@@ -81,6 +82,14 @@ def test_integrity_rejects_incomplete_outputs(tmp_path):
     write_json(tmp_path / "result.json", {"status":"complete", "identity":"x", "artifacts":{}})
     with pytest.raises(ValueError, match="Incomplete"):
         verify_result(tmp_path, "x")
+
+
+def test_artifact_manifest_paths_do_not_depend_on_resolve(tmp_path):
+    with patch.object(Path, "resolve", side_effect=AssertionError("resolve must not be used")):
+        assert artifact_path(tmp_path, "audio.flac") == tmp_path.absolute() / "audio.flac"
+    for name in ("../audio.flac", str(tmp_path.absolute() / "audio.flac")):
+        with pytest.raises(ValueError, match="Invalid artifact path"):
+            artifact_path(tmp_path, name)
 
 
 def test_invalid_hyperparameters():

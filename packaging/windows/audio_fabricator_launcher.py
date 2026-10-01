@@ -20,10 +20,12 @@ import uuid
 
 
 APP_NAME = "Bureau Obscura Audio Fabricator"
+MUSIC_PORT = 55290
 STABLE_PORT = 7860
 CREATE_NO_WINDOW = 0x08000000
 CREATE_NEW_PROCESS_GROUP = 0x00000200
 CREATE_SUSPENDED = 0x00000004
+PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
 JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE = 0x00002000
 JOB_OBJECT_EXTENDED_LIMIT_INFORMATION_CLASS = 9
 ERROR_ALREADY_EXISTS = 183
@@ -113,11 +115,31 @@ kernel32.TerminateJobObject.argtypes = [wintypes.HANDLE, wintypes.UINT]
 kernel32.TerminateJobObject.restype = wintypes.BOOL
 kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
 kernel32.CloseHandle.restype = wintypes.BOOL
+kernel32.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+kernel32.OpenProcess.restype = wintypes.HANDLE
+kernel32.QueryFullProcessImageNameW.argtypes = [
+    wintypes.HANDLE, wintypes.DWORD, wintypes.LPWSTR, ctypes.POINTER(wintypes.DWORD)
+]
+kernel32.QueryFullProcessImageNameW.restype = wintypes.BOOL
 kernel32.CreateMutexW.argtypes = [ctypes.c_void_p, wintypes.BOOL, wintypes.LPCWSTR]
 kernel32.CreateMutexW.restype = wintypes.HANDLE
 ntdll = ctypes.WinDLL("ntdll")
 ntdll.NtResumeProcess.argtypes = [wintypes.HANDLE]
 ntdll.NtResumeProcess.restype = ctypes.c_long
+user32 = ctypes.WinDLL("user32", use_last_error=True)
+WNDENUMPROC = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
+user32.EnumWindows.argtypes = [WNDENUMPROC, wintypes.LPARAM]
+user32.EnumWindows.restype = wintypes.BOOL
+user32.IsWindowVisible.argtypes = [wintypes.HWND]
+user32.IsWindowVisible.restype = wintypes.BOOL
+user32.IsWindow.argtypes = [wintypes.HWND]
+user32.IsWindow.restype = wintypes.BOOL
+user32.GetWindowTextLengthW.argtypes = [wintypes.HWND]
+user32.GetWindowTextLengthW.restype = ctypes.c_int
+user32.GetWindowTextW.argtypes = [wintypes.HWND, wintypes.LPWSTR, ctypes.c_int]
+user32.GetWindowTextW.restype = ctypes.c_int
+user32.GetWindowThreadProcessId.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.DWORD)]
+user32.GetWindowThreadProcessId.restype = wintypes.DWORD
 
 
 def local_data() -> Path:
@@ -137,6 +159,77 @@ def browser_session_profile(data: Path) -> Path:
     profile = sessions / f"session-{stamp}-{uuid.uuid4().hex[:8]}"
     profile.mkdir()
     return profile
+
+
+def process_image_name(process_id: int) -> str:
+    handle = kernel32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, process_id)
+    if not handle:
+        return ""
+    try:
+        size = wintypes.DWORD(32768)
+        buffer = ctypes.create_unicode_buffer(size.value)
+        if not kernel32.QueryFullProcessImageNameW(handle, 0, buffer, ctypes.byref(size)):
+            return ""
+        return Path(buffer.value).name.casefold()
+    finally:
+        kernel32.CloseHandle(handle)
+
+
+def app_windows() -> dict[int, tuple[int, str]]:
+    windows: dict[int, tuple[int, str]] = {}
+
+    @WNDENUMPROC
+    def visit(hwnd, _):
+        if not user32.IsWindowVisible(hwnd):
+            return True
+        length = user32.GetWindowTextLengthW(hwnd)
+        if length <= 0:
+            return True
+        buffer = ctypes.create_unicode_buffer(length + 1)
+        user32.GetWindowTextW(hwnd, buffer, length + 1)
+        title = buffer.value
+        if APP_NAME.casefold() not in title.casefold():
+            return True
+        process_id = wintypes.DWORD()
+        user32.GetWindowThreadProcessId(hwnd, ctypes.byref(process_id))
+        if process_image_name(int(process_id.value)) == "msedge.exe":
+            windows[int(hwnd)] = (int(process_id.value), title)
+        return True
+
+    user32.EnumWindows(visit, 0)
+    return windows
+
+
+def wait_for_app_window(
+    previous: set[int],
+    process: subprocess.Popen[bytes],
+    lifecycle: "Lifecycle",
+    log_file,
+    timeout: float = 20,
+) -> int:
+    deadline = time.monotonic() + timeout
+    process_exit_logged = False
+    while time.monotonic() < deadline:
+        lifecycle.ensure_running()
+        windows = app_windows()
+        new_handles = [handle for handle in windows if handle not in previous]
+        if new_handles:
+            handle = new_handles[0]
+            pid, title = windows[handle]
+            write_log(log_file, f"Owning Edge window HWND {handle}, PID {pid}, title {title!r}")
+            return handle
+        # Edge may reuse a still-visible app window. The music origin is fixed, so
+        # accepting it is safe and lets an old page reconnect after a restart.
+        if windows and time.monotonic() > deadline - timeout + 3:
+            handle = next(iter(windows))
+            pid, title = windows[handle]
+            write_log(log_file, f"Owning reused Edge window HWND {handle}, PID {pid}, title {title!r}")
+            return handle
+        if process.poll() is not None and not process_exit_logged:
+            write_log(log_file, f"Edge starter PID {process.pid} exited with code {process.returncode}; waiting for its app window")
+            process_exit_logged = True
+        time.sleep(0.2)
+    raise RuntimeError("Microsoft Edge did not open the Audio Fabricator app window.")
 
 
 def show_error(message: str) -> None:
@@ -363,6 +456,10 @@ def main() -> int:
     log_file = None
     try:
         web, yue_server, stable_server, browser = validate_installation()
+        if port_open(MUSIC_PORT):
+            raise RuntimeError(
+                f"Music port {MUSIC_PORT} is already in use. Close the existing Audio Fabricator process, then open it again."
+            )
         if port_open(STABLE_PORT):
             raise RuntimeError(
                 "Sound port 7860 is already in use. Close the existing Stable Audio window or process, then open Audio Fabricator again."
@@ -373,7 +470,7 @@ def main() -> int:
         lifecycle = Lifecycle(log_file)
         atexit.register(lifecycle.close)
 
-        music_port = free_loopback_port()
+        music_port = MUSIC_PORT
         music_url = f"http://127.0.0.1:{music_port}"
         environment = os.environ.copy()
         environment.update(PYTHONUNBUFFERED="1", PYTHONDONTWRITEBYTECODE="1", YUE_STUDIO_REPO=str(YUE_ROOT))
@@ -421,12 +518,13 @@ def main() -> int:
 
         if splash:
             splash.status("Opening Audio Fabricator…")
-        app_url = music_url + "/?theme=dark"
+        app_url = music_url + f"/?theme=dark&session={uuid.uuid4().hex[:8]}"
         # Chromium reuses a process that already owns the same user-data directory.
         # In that case Popen returns a short-lived handoff process; treating its exit
         # as the window closing shuts down both local APIs while the page is visible.
         # A unique session profile gives this launcher a real browser lifetime to own.
         profile = browser_session_profile(data)
+        previous_windows = set(app_windows())
         write_log(log_file, f"Opening Edge app at {app_url} with isolated profile {profile}")
         app = subprocess.Popen(
             [
@@ -440,13 +538,14 @@ def main() -> int:
             stderr=subprocess.DEVNULL,
         )
         write_log(log_file, f"Edge app process started with PID {app.pid}")
+        app_window = wait_for_app_window(previous_windows, app, lifecycle, log_file)
         if splash:
             splash.close()
             splash = None
-        while app.poll() is None:
+        while user32.IsWindow(wintypes.HWND(app_window)):
             lifecycle.ensure_running()
             time.sleep(0.5)
-        write_log(log_file, f"Edge app process exited with code {app.returncode}; stopping local engines")
+        write_log(log_file, f"Edge app window HWND {app_window} closed; stopping local engines")
         return 0
     except UserCancelled:
         return 0

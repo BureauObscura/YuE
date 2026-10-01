@@ -129,6 +129,25 @@ def collect_hashes(directory, exclude=("result.json",)):
             for p in sorted(directory.rglob("*")) if p.is_file() and p.name not in exclude}
 
 
+def artifact_path(directory, name):
+    """Validate a manifest-relative path without resolving package-virtualized paths."""
+    directory = Path(directory).absolute()
+    relative = Path(name)
+    if (not relative.parts or relative.is_absolute() or relative.drive
+            or any(part in {"", ".", ".."} for part in relative.parts)):
+        raise ValueError("Invalid artifact path")
+    path = (directory / relative).absolute()
+    if not path.is_relative_to(directory):
+        raise ValueError("Invalid artifact path")
+    current = path
+    while current != directory:
+        is_junction = getattr(current, "is_junction", lambda: False)
+        if current.is_symlink() or is_junction():
+            raise ValueError("Invalid artifact path")
+        current = current.parent
+    return path
+
+
 def verify_result(directory, expected_identity=None):
     directory = Path(directory)
     result = json.loads((directory / "result.json").read_text(encoding="utf-8"))
@@ -141,9 +160,7 @@ def verify_result(directory, expected_identity=None):
     if not required <= set(artifacts):
         raise ValueError("Incomplete result artifact manifest")
     for name, expected in artifacts.items():
-        p = directory / name
-        if Path(name).is_absolute() or not p.resolve().is_relative_to(directory.resolve()):
-            raise ValueError("Invalid artifact path")
+        p = artifact_path(directory, name)
         if not p.is_file() or p.stat().st_size != expected["bytes"] or sha256_file(p) != expected["sha256"]:
             raise ValueError(f"Missing or corrupt result: {name}")
     return result

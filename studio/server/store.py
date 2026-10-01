@@ -71,6 +71,21 @@ def validate_filename(name):
         raise StudioError("Use a plain filename without directory components.")
 
 
+def confined_path(root, *parts, error="Invalid artifact path."):
+    """Build a contained path without resolving Windows package redirections."""
+    root = Path(root).absolute()
+    path = root.joinpath(*parts).absolute()
+    if not path.is_relative_to(root):
+        raise StudioError(error)
+    current = path
+    while current != root:
+        is_junction = getattr(current, "is_junction", lambda: False)
+        if current.is_symlink() or is_junction():
+            raise StudioError(error)
+        current = current.parent
+    return path
+
+
 def audio_type(data):
     if data[:4] == b"RIFF" and data[8:12] == b"WAVE" and len(data) >= 44:
         # Checking the container also rejects a renamed text file with only a magic prefix.
@@ -305,10 +320,7 @@ class Store:
     def take_dir(self, track_id, take_id):
         if not ID.fullmatch(track_id) or not ID.fullmatch(take_id):
             raise StudioError("Invalid artifact path.")
-        path = self.artifacts / track_id / "takes" / take_id
-        if not path.resolve().is_relative_to(self.artifacts):
-            raise StudioError("Invalid artifact path.")
-        return path
+        return confined_path(self.artifacts, track_id, "takes", take_id)
 
     def take_score(self, track_id, take_id):
         with self.lock:
@@ -431,9 +443,9 @@ class Store:
         ext, mime = image_type(data)
         with self.lock:
             track = self._track(track_id)
-            folder = self.artifacts / track_id / "covers"
-            if folder.is_symlink() or not folder.resolve().is_relative_to(self.artifacts):
-                raise StudioError("Invalid artwork storage path.")
+            folder = confined_path(
+                self.artifacts, track_id, "covers", error="Invalid artwork storage path."
+            )
             folder.mkdir(parents=True, exist_ok=True, mode=0o700)
             path = folder / (secrets.token_hex(16) + ext)
             with open(path, "xb") as stream:
@@ -467,7 +479,10 @@ class Store:
                         allowed[take["_audio"]] = take["_mime"]
             if relative not in allowed:
                 raise StudioError("Asset not found.", 404)
-            path = self.artifacts / relative
-            if path.is_symlink() or not path.resolve().is_relative_to(self.artifacts) or not path.is_file():
+            try:
+                path = confined_path(self.artifacts, relative, error="Asset not found.")
+            except StudioError:
+                raise StudioError("Asset not found.", 404) from None
+            if not path.is_file():
                 raise StudioError("Asset not found.", 404)
             return path, allowed[relative]
