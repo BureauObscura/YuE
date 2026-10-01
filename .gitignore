@@ -21,3 +21,7 @@ runs/
 *.whl
 *.partial
 .DS_Store
+packaging/windows/.build-venv/
+packaging/windows/build/
+packaging/windows/dist/
+packaging/windows/release/

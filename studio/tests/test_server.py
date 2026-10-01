@@ -23,10 +23,11 @@ import zipfile
 
 SERVER_DIR = Path(__file__).resolve().parents[1] / "server"
 sys.path.insert(0, str(SERVER_DIR))
+import server as server_module
 from server import Studio, StudioHTTPServer, default_data_dir
 from store import Store, StudioError, audio_type, image_type, decode_upload
 from jobs import JobManager, remote_url
-from worker import cached_model
+from worker import cached_model, duration_sampling
 
 
 def wav_bytes():
@@ -158,6 +159,74 @@ class StorageTests(unittest.TestCase):
         (path / "second.safetensors").write_bytes(b"b" * 20)
         self.assertEqual(cached_model(str(path), tokenizer=True), path.resolve())
 
+    def test_instrumental_duration_request_is_explicit_and_frozen(self):
+        track = self.store.create({"style": "warm analog ambient", "instrumental": True,
+                                   "target_duration_seconds": 90, "cot": "full"})
+        take = self.store.new_take(track["id"])
+        request = self.store.take_internal(track["id"], take["id"])["_request"]
+        self.assertEqual(request["lyrics"], "[Intro]\n\n[Verse]\n\n[Outro]\n")
+        self.assertIn("Instrumental only: no singing", request["style"])
+        self.assertIn("natural ending near 90 seconds", request["style"])
+        self.assertEqual(request["_studio"]["instrumental"], True)
+        self.assertEqual(request["_studio"]["target_duration_seconds"], 90)
+
+        for duration in (1, 45, 181, "90"):
+            with self.assertRaisesRegex(StudioError, "approximate duration"):
+                self.store.create({"target_duration_seconds": duration})
+        with self.assertRaisesRegex(StudioError, "Instrumental must be true or false"):
+            self.store.create({"instrumental": "yes"})
+        invalid = self.store.create({"style": "ambient", "instrumental": True, "cot": "off"})
+        with self.assertRaisesRegex(StudioError, "needs Melody"):
+            self.store.new_take(invalid["id"])
+
+    def test_duration_sampling_uses_approximate_codec_bounds(self):
+        self.assertIsNone(duration_sampling(None))
+        self.assertEqual(duration_sampling(30), {"min_tokens": 600, "max_tokens": 900})
+        self.assertEqual(duration_sampling(180), {"min_tokens": 3600, "max_tokens": 5400})
+        with self.assertRaisesRegex(ValueError, "Unsupported target duration"):
+            duration_sampling(45)
+
+    def test_stale_remix_direction_does_not_change_a_new_composition(self):
+        track = self.store.create({"style": "minimal synth", "lyrics": "New signal",
+                                   "operation": "new", "edit_direction": "Make the old take noisier."})
+        take = self.store.new_take(track["id"])
+        request = self.store.take_internal(track["id"], take["id"])["_request"]
+        self.assertEqual(request["style"], "minimal synth")
+        self.assertEqual(request["_studio"]["edit_direction"], "")
+
+    def test_remix_and_extend_require_a_local_reference_score(self):
+        track = self.store.create({"style": "dry post-punk", "lyrics": "Hold the line", "cot": "melody"})
+        track = self.store.import_audio(track["id"], {
+            "filename": "reference.wav", "data": base64.b64encode(wav_bytes()).decode()
+        })
+        reference_id = track["selected_take_id"]
+        self.store.update(track["id"], {"operation": "remix", "reference_take_id": reference_id,
+                                         "edit_direction": "Replace drums with brushed metal."})
+        with self.assertRaisesRegex(StudioError, "cannot condition on it directly"):
+            self.store.new_take(track["id"])
+        self.assertEqual(len(self.store.track(track["id"])["takes"]), 1)
+
+        score = "X:1\nM:4/4\nK:C\n[V:Vocal] CDEF|\n"
+        artifact_dir = self.store.take_dir(track["id"], reference_id) / "artifacts"
+        artifact_dir.mkdir(parents=True, exist_ok=True)
+        (artifact_dir / "score.abc").write_text(score, encoding="utf-8")
+        remix = self.store.new_take(track["id"])
+        remix_request = self.store.take_internal(track["id"], remix["id"])["_request"]
+        self.assertEqual(remix_request["abc"], score)
+        self.assertIn("score-conditioned remix", remix_request["style"])
+        self.assertIn("Replace drums with brushed metal", remix_request["style"])
+        self.assertEqual(remix_request["_studio"]["reference"]["take_id"], reference_id)
+
+        self.store.update(track["id"], {"operation": "extend", "abc": score})
+        with self.assertRaisesRegex(StudioError, "Extend the reference score"):
+            self.store.new_take(track["id"])
+        extended_score = score + "[V:Vocal] GABc|\n"
+        self.store.update(track["id"], {"abc": extended_score})
+        extended = self.store.new_take(track["id"])
+        extended_request = self.store.take_internal(track["id"], extended["id"])["_request"]
+        self.assertEqual(extended_request["abc"], extended_score)
+        self.assertIn("user-extended score", extended_request["style"])
+
 
 class QueueTests(unittest.TestCase):
     def test_owned_worker_failure_and_running_cancellation(self):
@@ -277,7 +346,11 @@ class HTTPTests(unittest.TestCase):
     def test_bootstrap_and_write_token(self):
         status, headers, data = self.request("GET", "/api/bootstrap")
         self.assertEqual(status, 200)
-        token = json.loads(data)["csrf"]
+        bootstrap = json.loads(data)
+        token = bootstrap["csrf"]
+        state_status, _, state_data = self.request("GET", "/api/state")
+        self.assertEqual(state_status, 200)
+        self.assertEqual(json.loads(state_data), bootstrap)
         self.assertEqual(headers["Cache-Control"], "no-store")
         self.assertEqual(self.request("POST", "/api/tracks", {})[0], 403)
         result = self.request("POST", "/api/tracks", {"title": "Hello"}, {"X-Studio-Token": token})
@@ -325,6 +398,64 @@ class HTTPTests(unittest.TestCase):
             self.assertEqual(metadata["original_sha256"], hashlib.sha256(wav_bytes()).hexdigest())
             self.assertFalse(metadata["artwork_embedded_in_delivery_copy"])
         self.assertEqual(list(self.studio.store.root.glob("yue-export-*.zip")), [])
+
+    def test_take_score_endpoint_returns_only_saved_local_score(self):
+        track = self.studio.store.create({})
+        track = self.studio.store.import_audio(track["id"], {
+            "filename": "reference.wav", "data": base64.b64encode(wav_bytes()).decode()
+        })
+        take_id = track["selected_take_id"]
+        missing = self.request("GET", f"/api/tracks/{track['id']}/takes/{take_id}/score")
+        self.assertEqual(missing[0], 409)
+
+        score = "X:1\nM:4/4\nK:C\n[V:Vocal] CDEF|\n"
+        artifact_dir = self.studio.store.take_dir(track["id"], take_id) / "artifacts"
+        artifact_dir.mkdir(parents=True, exist_ok=True)
+        (artifact_dir / "score.abc").write_text(score, encoding="utf-8")
+        status, headers, data = self.request("GET", f"/api/tracks/{track['id']}/takes/{take_id}/score")
+        self.assertEqual(status, 200)
+        self.assertEqual(headers["Content-Type"], "application/json; charset=utf-8")
+        self.assertEqual(json.loads(data), {"score": score})
+
+    def test_wav_and_mp3_delivery_exports_are_local_and_ephemeral(self):
+        track = self.studio.store.create({"title": "Night Signal", "artist": "Bureau", "album": "Tests"})
+        track = self.studio.store.import_audio(track["id"], {
+            "filename": "source.wav", "data": base64.b64encode(wav_bytes()).decode()
+        })
+        take_id = track["selected_take_id"]
+        status, headers, data = self.request(
+            "GET", f"/api/tracks/{track['id']}/export?take={take_id}&format=wav"
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(headers["Content-Type"], "audio/wav")
+        self.assertIn(f"YuE-Studio-{take_id[:8]}.wav", headers["Content-Disposition"])
+        self.assertEqual(data, wav_bytes())
+
+        commands = []
+
+        def fake_ffmpeg(command, **kwargs):
+            commands.append(command)
+            Path(command[-1]).write_bytes(b"ID3" + b"\0" * 80)
+            return type("Result", (), {"returncode": 0, "stderr": b""})()
+
+        with patch.object(server_module.shutil, "which", return_value=r"C:\ffmpeg\ffmpeg.exe"), \
+             patch.object(server_module.subprocess, "run", side_effect=fake_ffmpeg):
+            status, headers, data = self.request(
+                "GET", f"/api/tracks/{track['id']}/export?take={take_id}&format=mp3"
+            )
+        self.assertEqual(status, 200)
+        self.assertEqual(headers["Content-Type"], "audio/mpeg")
+        self.assertIn(f"YuE-Studio-{take_id[:8]}.mp3", headers["Content-Disposition"])
+        self.assertEqual(data, b"ID3" + b"\0" * 80)
+        self.assertEqual(len(commands), 1)
+        self.assertEqual(commands[0][0], r"C:\ffmpeg\ffmpeg.exe")
+        self.assertIn("-nostdin", commands[0])
+        self.assertIn("libmp3lame", commands[0])
+        self.assertIn("title=Night Signal", commands[0])
+        self.assertEqual(self.request(
+            "GET", f"/api/tracks/{track['id']}/export?take={take_id}&format=flac"
+        )[0], 400)
+        self.assertEqual(list(self.studio.store.root.glob("yue-audio-*")), [])
 
     def test_artwork_independent_and_key_never_saved(self):
         key = "private-test-key"

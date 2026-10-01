@@ -15,10 +15,12 @@ import secrets
 import shutil
 import signal
 import socket
+import subprocess
 import sys
 import tempfile
 import threading
 from urllib.parse import parse_qs, unquote, urlsplit
+from urllib.request import urlopen
 import webbrowser
 import zipfile
 
@@ -138,6 +140,10 @@ class Studio:
                         file = artifact_dir / name
                         if file.is_file() and not file.is_symlink():
                             archive.write(file, "generation/" + name)
+                    for name in ("studio-context.json", "instrumental-transfer.json"):
+                        file = self.store.take_dir(track_id, take_id) / name
+                        if file.is_file() and not file.is_symlink():
+                            archive.write(file, "generation/" + name)
                     embedded = self._tag_export_copy(archive, audio, cover, track)
                     metadata = {"track": {k: track[k] for k in ("id", "title", "artist", "album", "created_at")},
                                 "take": {k: v for k, v in take.items() if not k.startswith("_")},
@@ -154,6 +160,50 @@ class Studio:
             except Exception:
                 destination.unlink(missing_ok=True)
                 raise
+
+    def export_audio(self, track_id, take_id, format_name):
+        if format_name not in {"mp3", "wav"}:
+            raise StudioError("Choose MP3 or WAV export.")
+        with self.store.lock:
+            track = self.store._track(track_id)
+            take_id = take_id or track["selected_take_id"]
+            if not take_id:
+                raise StudioError("Select a recorded take to export.", 409)
+            take = self.store._take(track, take_id)
+            if take["status"] not in {"complete", "needs_review"} or not take.get("_audio"):
+                raise StudioError("This take has no completed recording to export.", 409)
+            source = self.store.media_path(take["_audio"])[0]
+            metadata = {key: track[key] for key in ("title", "artist", "album")}
+        target = tempfile.NamedTemporaryFile(prefix="yue-audio-", suffix="." + format_name,
+                                             dir=self.store.root, delete=False)
+        target.close()
+        destination = Path(target.name)
+        try:
+            if source.suffix.lower() == "." + format_name:
+                shutil.copyfile(source, destination)
+            else:
+                ffmpeg = shutil.which("ffmpeg")
+                if not ffmpeg:
+                    raise StudioError("Local FFmpeg is required for MP3 and WAV delivery exports.", 503)
+                codec = ["-c:a", "libmp3lame", "-b:a", "320k"] if format_name == "mp3" else ["-c:a", "pcm_s24le"]
+                command = [ffmpeg, "-hide_banner", "-loglevel", "error", "-nostdin", "-y", "-i", str(source),
+                           "-map_metadata", "-1", *codec]
+                for key, value in metadata.items():
+                    if value:
+                        command += ["-metadata", f"{key}={value}"]
+                command.append(str(destination))
+                result = subprocess.run(command, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                                        stderr=subprocess.PIPE, timeout=300,
+                                        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+                if result.returncode != 0:
+                    raise StudioError("FFmpeg could not create this delivery file. The original recording is unchanged.", 500)
+            if destination.stat().st_size < 44:
+                raise StudioError("The converted delivery file was empty. The original recording is unchanged.", 500)
+            mime = "audio/mpeg" if format_name == "mp3" else "audio/wav"
+            return destination, mime, f"YuE-Studio-{take_id[:8]}.{format_name}"
+        except Exception:
+            destination.unlink(missing_ok=True)
+            raise
 
     @staticmethod
     def _tag_export_copy(archive, audio, cover, track):
@@ -364,8 +414,16 @@ class Handler(BaseHTTPRequestHandler):
             raise StudioError("Invalid request path.", 400)
         get = self.command in {"GET", "HEAD"}
         store = self.studio.store
-        if path == "/api/bootstrap" and get:
+        if path in {"/api/bootstrap", "/api/state"} and get:
             return self.json(self.studio.bootstrap())
+        if path == "/api/sound-engine" and get:
+            try:
+                with urlopen("http://127.0.0.1:7860/config", timeout=3) as response:
+                    payload = json.loads(response.read(512 * 1024))
+                ready = response.status == 200 and payload.get("mode") == "blocks" and bool(payload.get("app_id"))
+            except (OSError, TimeoutError, ValueError, json.JSONDecodeError):
+                ready = False
+            return self.json({"ready": ready})
         if path == "/api/engine" and get:
             return self.json(self.studio.jobs.engine(refresh=True))
         if path == "/api/settings" and self.command == "PATCH":
@@ -407,10 +465,21 @@ class Handler(BaseHTTPRequestHandler):
             if cancel and self.command == "POST":
                 self.body()
                 return self.json({"track": self.studio.jobs.cancel(track_id, cancel[1])})
+            score = re.fullmatch(r"takes/([a-f0-9]{32})/score", action or "")
+            if score and get:
+                return self.json({"score": store.take_score(track_id, score[1])})
             if action == "export" and get:
-                destination = self.studio.export(track_id, parse_qs(parsed.query).get("take", [None])[0])
+                query = parse_qs(parsed.query)
+                take_id = query.get("take", [None])[0]
+                format_name = query.get("format", ["package"])[0]
+                if format_name in {"mp3", "wav"}:
+                    destination, mime, filename = self.studio.export_audio(track_id, take_id, format_name)
+                elif format_name in {"package", "zip"}:
+                    destination, mime, filename = self.studio.export(track_id, take_id), "application/zip", "YuE-Studio-track.zip"
+                else:
+                    raise StudioError("Choose package, MP3, or WAV export.")
                 try:
-                    return self.file(destination, "application/zip", {"Content-Disposition": 'attachment; filename="YuE-Studio-track.zip"'})
+                    return self.file(destination, mime, {"Content-Disposition": f'attachment; filename="{filename}"'})
                 finally:
                     destination.unlink(missing_ok=True)
         if path.startswith("/api/"):

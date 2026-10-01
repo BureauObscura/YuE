@@ -1,3 +1,14 @@
+> ## Bureau Obscura Audio Fabricator
+>
+> This fork packages the Bureau Obscura-branded YuE Studio together with
+> Stable Audio 3 Small SFX as a local Windows **non-commercial art project**.
+> The offline release includes pinned model files and separate license notices;
+> it is not a commercial product or service. YuE2 weights remain CC BY-NC 4.0
+> with the authors' additional individual-creator permission and are not
+> relicensed by Bureau Obscura. See
+> [`packaging/windows/MODEL_TERMS.md`](packaging/windows/MODEL_TERMS.md) before
+> downloading, using, or redistributing an offline bundle.
+
 > Looking for the original YuE? Its code, documentation, and license are preserved on the **[YuE-v1 branch](https://github.com/multimodal-art-projection/YuE/tree/YuE-v1)**.
 
 > **Windows and Mac interface in this fork:** [YuE Studio](studio/README.md) adds an app-like Windows launcher and native Mac window, plus a local song library, lyrics and score editor, alternate takes, playback, album artwork, and exports. The interface opens independently of the separately configured music runtime.

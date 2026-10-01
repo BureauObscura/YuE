@@ -1,0 +1,23 @@
+{
+  "yue2_3b": {
+    "repository": "m-a-p/YuE2-3B",
+    "revision": "c044757a011169583f363168348ae380946efff8",
+    "license": "CC-BY-NC-4.0 plus the bundled individual-creator permission"
+  },
+  "yue2_vae": {
+    "repository": "m-a-p/YuE2-Vae",
+    "revision": "152733a19ad43aa67e367f9b5503ef8075bb5126",
+    "license": "CC-BY-NC-4.0 plus the bundled individual-creator permission"
+  },
+  "stable_audio_3_optimized": {
+    "repository": "stabilityai/stable-audio-3-optimized",
+    "revision": "da6edc54ddba10bfd79a077102ded687f80e882b",
+    "variant": "TFLite Small SFX fp32 with SAME-S and T5Gemma",
+    "license": "Stability AI Community License; T5Gemma is also subject to Gemma Terms of Use"
+  },
+  "stable_audio_3_code": {
+    "repository": "Stability-AI/stable-audio-3",
+    "revision": "3a82c807b69cf4b7c5c05270011a5d5e47abac18",
+    "license": "MIT"
+  }
+}

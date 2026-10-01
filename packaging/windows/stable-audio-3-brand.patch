@@ -1,0 +1,227 @@
+diff --git a/optimized/tflite/scripts/sa3_gradio.py b/optimized/tflite/scripts/sa3_gradio.py
+index 33c7f30..b499ffb 100644
+--- a/optimized/tflite/scripts/sa3_gradio.py
++++ b/optimized/tflite/scripts/sa3_gradio.py
+@@ -988,15 +988,205 @@ def build_ui(initial_dit: str, initial_decoder: str, initial_precision: str, *,
+     # visible=False would remove it from the DOM entirely, so hide via CSS.
+     # sa3-out: collapse the column's flex gap + wrapper padding so the
+     # spectrogram caption / timing line / queued status sit tightly together.
+-    _css = ("#sa3-promote{display:none !important}"
+-            "#sa3-out{gap:4px !important}"
+-            "#sa3-out .html-container{padding:0 !important; margin:0 !important}")
+-    with gr.Blocks(title="SA3 TFLite") as demo:
++    _css = """
++        :root {
++          --bo-background: #050805;
++          --bo-raised: #0a0f0a;
++          --bo-deep: #111711;
++          --bo-ink: #98e598;
++          --bo-secondary: #6ba86b;
++          --bo-muted: #5f985f;
++          --bo-signal: #7ee87e;
++          --bo-bureau-red: #d04b3a;
++          --bo-surface: #0a0f0a;
++          --bo-input: #111711;
++          --bo-border: #2a3d2a;
++          --bo-control: #111711;
++          --bo-control-hover: #182218;
++          --bo-accent-soft: #17331d;
++          --bo-primary-text: #050805;
++          --bo-header: #0a0f0af5;
++          --bo-active-bg: #98e598;
++          --bo-active-text: #050805;
++          --bo-placeholder: #5f985f;
++          --bo-scheme: dark;
++        }
++        :root[data-bo-theme="light"] {
++          --bo-background: #e3e3e3;
++          --bo-raised: #d9d9d9;
++          --bo-deep: #cfcfcf;
++          --bo-ink: #171917;
++          --bo-secondary: #5c5f5c;
++          --bo-muted: #626562;
++          --bo-signal: #245c35;
++          --bo-surface: #f1f1ee;
++          --bo-input: #f5f5f2;
++          --bo-border: #bec2be;
++          --bo-control: #e7e8e5;
++          --bo-control-hover: #f3f3f0;
++          --bo-accent-soft: #ced8d0;
++          --bo-primary-text: #f0f5f1;
++          --bo-header: #d9d9d9f5;
++          --bo-active-bg: #171917;
++          --bo-active-text: #e9eee9;
++          --bo-placeholder: #777c77;
++          --bo-scheme: light;
++        }
++        body, .gradio-container {
++          background: var(--bo-background) !important;
++          color: var(--bo-ink) !important;
++          font-family: "IBM Plex Mono", ui-monospace, Menlo, Consolas, monospace !important;
++        }
++        .gradio-container {
++          --body-background-fill: var(--bo-background);
++          --body-text-color: var(--bo-ink);
++          --body-text-color-subdued: var(--bo-secondary);
++          --background-fill-primary: var(--bo-surface);
++          --background-fill-secondary: var(--bo-raised);
++          --border-color-primary: var(--bo-border);
++          --border-color-accent: var(--bo-signal);
++          --block-background-fill: var(--bo-surface);
++          --block-border-color: var(--bo-border);
++          --block-info-text-color: var(--bo-secondary);
++          --block-label-background-fill: transparent;
++          --block-label-text-color: var(--bo-secondary);
++          --block-title-background-fill: transparent;
++          --block-title-text-color: var(--bo-ink);
++          --input-background-fill: var(--bo-input);
++          --input-border-color: var(--bo-border);
++          --input-placeholder-color: var(--bo-placeholder);
++          --button-primary-background-fill: var(--bo-signal);
++          --button-primary-background-fill-hover: var(--bo-ink);
++          --button-primary-border-color: var(--bo-signal);
++          --button-primary-text-color: var(--bo-primary-text);
++          --button-secondary-background-fill: var(--bo-control);
++          --button-secondary-background-fill-hover: var(--bo-control-hover);
++          --button-secondary-border-color: var(--bo-border);
++          --button-secondary-text-color: var(--bo-ink);
++          --checkbox-background-color: var(--bo-input);
++          --checkbox-background-color-selected: var(--bo-signal);
++          --checkbox-border-color: var(--bo-border);
++          --checkbox-border-color-selected: var(--bo-signal);
++          --slider-color: var(--bo-signal);
++          --table-even-background-fill: var(--bo-control);
++          --color-accent: var(--bo-signal);
++          --color-accent-soft: var(--bo-accent-soft);
++          --border-radius-lg: 3px;
++          --border-radius-md: 2px;
++          --border-radius-sm: 2px;
++          color-scheme: var(--bo-scheme);
++        }
++        .gradio-container .prose, .gradio-container .prose *,
++        .gradio-container label, .gradio-container input, .gradio-container textarea,
++        .gradio-container select, .gradio-container .wrap, .gradio-container .info {
++          color: var(--bo-ink) !important;
++        }
++        .gradio-container input::placeholder, .gradio-container textarea::placeholder {
++          color: var(--bo-placeholder) !important;
++        }
++        .gradio-container button:not(.primary) {color: var(--bo-ink) !important}
++        #bo-fabricator-header {
++          position: sticky; top: 0; z-index: 100;
++          display: flex; align-items: center; justify-content: space-between; gap: 24px;
++          margin: -16px -16px 24px; padding: 13px 20px;
++          background: var(--bo-header); border-bottom: 1px solid var(--bo-border);
++          backdrop-filter: blur(12px);
++        }
++        .bo-brand {display:grid; justify-items:center; gap:5px; color:var(--bo-ink); text-align:center}
++        .bo-lockup {display:block; line-height:0}
++        .bo-lockup svg {display:block; width:174px; max-width:100%; height:auto; color:var(--bo-ink) !important}
++        .bo-brand small {font-size:9px; color:var(--bo-secondary); letter-spacing:2.2px}
++        .bo-header-controls {display:flex; align-items:center; gap:10px}
++        .bo-mode-switch {display:inline-flex; padding:3px; border:1px solid var(--bo-border); background:var(--bo-control); border-radius:3px}
++        .bo-mode-switch a {display:inline-flex; align-items:center; justify-content:center; min-width:82px; padding:8px 11px; border-radius:1px; color:var(--bo-secondary) !important; font-size:10px; font-weight:600; letter-spacing:.55px; text-decoration:none !important; text-transform:uppercase}
++        .bo-mode-switch a:hover {background:var(--bo-control-hover); color:var(--bo-ink) !important}
++        .bo-mode-switch a.active {background:var(--bo-active-bg); color:var(--bo-active-text) !important; box-shadow:0 1px 8px #7ee87e18}
++        .bo-mode-switch i {width:5px; height:5px; margin-right:7px; border-radius:50%; background:#7ee87e; box-shadow:0 0 0 3px #7ee87e18}
++        .bo-theme-toggle {display:inline-grid; place-items:center; width:34px; height:34px; padding:0; border:1px solid var(--bo-border); border-radius:3px; background:var(--bo-control); color:var(--bo-signal) !important; cursor:pointer}
++        .bo-theme-toggle:hover {background:var(--bo-control-hover)}
++        .bo-theme-toggle:focus-visible {outline:2px solid var(--bo-signal); outline-offset:3px}
++        .bo-theme-toggle svg {width:16px; height:16px; stroke:currentColor; fill:none; stroke-width:1.7}
++        :root[data-bo-theme="dark"] .bo-icon-moon, :root[data-bo-theme="light"] .bo-icon-sun {display:none}
++        #bo-sound-intro {margin-bottom:12px; padding-left:2px}
++        #bo-sound-intro h2 {margin:0 0 7px; color:var(--bo-ink) !important; font-size:25px; font-weight:550; letter-spacing:-.6px}
++        #bo-sound-intro p {margin:0; color:var(--bo-secondary) !important; font-size:12px; line-height:1.65}
++        #bo-sound-intro .bo-stability-attribution {margin-top:8px; color:var(--bo-muted) !important; font-size:10px; letter-spacing:.35px}
++        button.primary {background:var(--bo-signal) !important; border-color:var(--bo-signal) !important; color:var(--bo-primary-text) !important}
++        #sa3-promote{display:none !important}
++        #sa3-out{gap:4px !important}
++        #sa3-out .html-container{padding:0 !important; margin:0 !important}
++        @media (max-width: 640px) {
++          .gradio-container {max-width:100% !important; overflow-x:hidden !important}
++          .gradio-container .row {flex-wrap:wrap !important}
++          .gradio-container .column {min-width:0 !important}
++          #bo-fabricator-header {grid-template-columns:minmax(0,1fr) auto; display:grid; margin:-16px -16px 18px; padding:10px 12px; gap:8px}
++          .bo-brand {min-width:0}.bo-lockup svg {width:108px}.bo-brand small {display:block; font-size:6px; letter-spacing:1.2px}
++          .bo-header-controls {gap:5px}.bo-mode-switch a {min-width:52px; padding:7px 5px; font-size:8px}.bo-theme-toggle {width:30px; height:30px}
++          #bo-sound-intro p {overflow-wrap:anywhere}
++        }
++    """
++    _header = """
++        <header id="bo-fabricator-header">
++          <div class="bo-brand">
++            <span class="bo-lockup"><svg xmlns="http://www.w3.org/2000/svg" width="700" height="184" viewBox="0 0 700 184" role="img" aria-label="Bureau Obscura alignment C / inherited color"><g xmlns="http://www.w3.org/2000/svg" transform="translate(0 -50) scale(0.7)"><g transform="translate(-6 0)"><g transform="translate(352.852018 89.771996) scale(2.94296)"><ellipse cx="50" cy="20" rx="44" ry="14" fill="none" stroke="currentColor" stroke-width="1.2"/><circle cx="50" cy="20" r="1.9" fill="currentColor"/></g></g><g fill="currentColor" aria-label="BUREAU" transform="translate(-4.5 0)"><path d="M80 698 L323 698 Q422 698 475.5 648.5 Q529 599 529 514 Q529 454 499.5 418 Q470 382 416 366 L416 361 Q479 346 515.5 306.5 Q552 267 552 195 Q552 151 537.5 115.5 Q523 80 496.5 54 Q470 28 432.5 14 Q395 0 348 0 L80 0 Z M308 95 Q363 95 390.5 115.5 Q418 136 418 186 L418 219 Q418 268 390.5 288.5 Q363 309 308 309 L208 309 L208 95 Z M291 400 Q344 400 369.5 419 Q395 438 395 485 L395 518 Q395 565 369.5 584 Q344 603 291 603 L208 603 L208 400 Z" transform="translate(170.6 298) scale(0.072 -0.072)"/><path d="M193 698 L193 263 Q193 224 195.5 193 Q198 162 208.5 140.5 Q219 119 240.5 107 Q262 95 300 95 Q338 95 359.5 107 Q381 119 391.5 140.5 Q402 162 404.5 193 Q407 224 407 263 L407 698 L538 698 L538 283 Q538 209 529 154 Q520 99 494 62 Q468 25 421.5 6.5 Q375 -12 300 -12 Q225 -12 178.5 6.5 Q132 25 106 62 Q80 99 71 154 Q62 209 62 283 L62 698 Z" transform="translate(219.56 298) scale(0.072 -0.072)"/><path d="M211 0 L80 0 L80 698 L345 698 Q447 698 501 640 Q555 582 555 482 Q555 405 519.5 352.5 Q484 300 418 286 L567 0 L423 0 L290 271 L211 271 Z M318 373 Q371 373 394 394.5 Q417 416 417 463 L417 501 Q417 548 394 569.5 Q371 591 318 591 L211 591 L211 373 Z" transform="translate(268.52 298) scale(0.072 -0.072)"/><path d="M83 0 L83 698 L524 698 L524 590 L214 590 L214 408 L513 408 L513 300 L214 300 L214 108 L524 108 L524 0 Z" transform="translate(317.48 298) scale(0.072 -0.072)"/><path d="M449 0 L400 177 L193 177 L145 0 L13 0 L209 698 L391 698 L588 0 Z M301 569 L293 569 L216 284 L378 284 Z" transform="translate(366.44 298) scale(0.072 -0.072)"/><path d="M193 698 L193 263 Q193 224 195.5 193 Q198 162 208.5 140.5 Q219 119 240.5 107 Q262 95 300 95 Q338 95 359.5 107 Q381 119 391.5 140.5 Q402 162 404.5 193 Q407 224 407 263 L407 698 L538 698 L538 283 Q538 209 529 154 Q520 99 494 62 Q468 25 421.5 6.5 Q375 -12 300 -12 Q225 -12 178.5 6.5 Q132 25 106 62 Q80 99 71 154 Q62 209 62 283 L62 698 Z" transform="translate(415.4 298) scale(0.072 -0.072)"/></g><g fill="currentColor" aria-label="OBSCURA" transform="translate(4.5 0)"><path d="M300 -12 Q232 -12 182 12.5 Q132 37 99.5 83 Q67 129 51.5 196 Q36 263 36 349 Q36 434 51.5 501.5 Q67 569 99.5 615 Q132 661 182 685.5 Q232 710 300 710 Q436 710 500 615 Q564 520 564 349 Q564 178 500 83 Q436 -12 300 -12 Z M300 95 Q335 95 359 108.5 Q383 122 397.5 147 Q412 172 418.5 208.5 Q425 245 425 290 L425 409 Q425 499 397.5 551 Q370 603 300 603 Q230 603 202.5 551 Q175 499 175 409 L175 289 Q175 199 202.5 147 Q230 95 300 95 Z" transform="translate(487.544 298) scale(0.072 -0.072)"/><path d="M80 698 L323 698 Q422 698 475.5 648.5 Q529 599 529 514 Q529 454 499.5 418 Q470 382 416 366 L416 361 Q479 346 515.5 306.5 Q552 267 552 195 Q552 151 537.5 115.5 Q523 80 496.5 54 Q470 28 432.5 14 Q395 0 348 0 L80 0 Z M308 95 Q363 95 390.5 115.5 Q418 136 418 186 L418 219 Q418 268 390.5 288.5 Q363 309 308 309 L208 309 L208 95 Z M291 400 Q344 400 369.5 419 Q395 438 395 485 L395 518 Q395 565 369.5 584 Q344 603 291 603 L208 603 L208 400 Z" transform="translate(536.504 298) scale(0.072 -0.072)"/><path d="M292 -12 Q202 -12 138.5 19 Q75 50 35 101 L114 183 Q153 138 198.5 116.5 Q244 95 296 95 Q356 95 388 122 Q420 149 420 200 Q420 242 396 263.5 Q372 285 315 294 L241 306 Q144 323 103 376.5 Q62 430 62 503 Q62 603 127 656.5 Q192 710 307 710 Q389 710 448.5 684 Q508 658 544 613 L467 531 Q439 564 400 583.5 Q361 603 308 603 Q194 603 194 509 Q194 469 218 448 Q242 427 300 417 L373 404 Q464 387 508 337 Q552 287 552 209 Q552 160 535 119.5 Q518 79 485 49.5 Q452 20 403.5 4 Q355 -12 292 -12 Z" transform="translate(585.464 298) scale(0.072 -0.072)"/><path d="M318 -12 Q181 -12 115.5 82 Q50 176 50 349 Q50 521 115.5 615.5 Q181 710 318 710 Q370 710 409.5 696 Q449 682 478 657.5 Q507 633 526 598.5 Q545 564 556 523 L436 489 Q429 513 420 534 Q411 555 397.5 570.5 Q384 586 364 594.5 Q344 603 316 603 Q248 603 218.5 551 Q189 499 189 409 L189 289 Q189 199 218.5 147 Q248 95 316 95 Q344 95 364 103.5 Q384 112 397.5 127.5 Q411 143 420 164 Q429 185 436 209 L556 175 Q545 134 526 99.5 Q507 65 478 40.5 Q449 16 409.5 2 Q370 -12 318 -12 Z" transform="translate(634.424 298) scale(0.072 -0.072)"/><path d="M193 698 L193 263 Q193 224 195.5 193 Q198 162 208.5 140.5 Q219 119 240.5 107 Q262 95 300 95 Q338 95 359.5 107 Q381 119 391.5 140.5 Q402 162 404.5 193 Q407 224 407 263 L407 698 L538 698 L538 283 Q538 209 529 154 Q520 99 494 62 Q468 25 421.5 6.5 Q375 -12 300 -12 Q225 -12 178.5 6.5 Q132 25 106 62 Q80 99 71 154 Q62 209 62 283 L62 698 Z" transform="translate(683.384 298) scale(0.072 -0.072)"/><path d="M211 0 L80 0 L80 698 L345 698 Q447 698 501 640 Q555 582 555 482 Q555 405 519.5 352.5 Q484 300 418 286 L567 0 L423 0 L290 271 L211 271 Z M318 373 Q371 373 394 394.5 Q417 416 417 463 L417 501 Q417 548 394 569.5 Q371 591 318 591 L211 591 L211 373 Z" transform="translate(732.344 298) scale(0.072 -0.072)"/><path d="M449 0 L400 177 L193 177 L145 0 L13 0 L209 698 L391 698 L588 0 Z M301 569 L293 569 L216 284 L378 284 Z" transform="translate(781.304 298) scale(0.072 -0.072)"/></g></g></svg></span>
++            <small>AUDIO FABRICATOR</small>
++          </div>
++          <div class="bo-header-controls">
++            <nav class="bo-mode-switch" aria-label="Generator mode">
++              <a data-music-return href="http://127.0.0.1:8766/">Music</a>
++              <a class="active" href="#" aria-current="page"><i></i>Sound</a>
++            </nav>
++            <button class="bo-theme-toggle" data-theme-toggle type="button" aria-label="Switch to light mode" title="Switch to light mode"><svg class="bo-icon-sun" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3.5"/><path d="M12 2v2M12 20v2M4.93 4.93l1.42 1.42M17.65 17.65l1.42 1.42M2 12h2M20 12h2M4.93 19.07l1.42-1.42M17.65 6.35l1.42-1.42"/></svg><svg class="bo-icon-moon" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 15.2A8.3 8.3 0 0 1 8.8 4 8.3 8.3 0 1 0 20 15.2Z"/></svg></button>
++          </div>
++        </header>
++        <section id="bo-sound-intro"><h2>Sound fabrication</h2><p>Generate local effects, atmospheres, and environmental recordings with Stable Audio 3 Small SFX.</p><p class="bo-stability-attribution">Powered by Stability AI · Stable Audio 3 Small SFX</p></section>
++    """
++    _header_js = """
++        const params = new URLSearchParams(window.location.search);
++        const link = element.querySelector('[data-music-return]');
++        const toggle = element.querySelector('[data-theme-toggle]');
++        const requestedTheme = params.get('theme');
++        let storedTheme = null;
++        try { storedTheme = localStorage.getItem('bo-audio-theme'); } catch (_) {}
++        let theme = requestedTheme === 'light' || requestedTheme === 'dark'
++          ? requestedTheme
++          : storedTheme === 'light' ? 'light' : 'dark';
++        const target = params.get('music');
++        if (link && target) {
++          try {
++            const url = new URL(target);
++            const loopback = ['127.0.0.1', 'localhost', '::1', '[::1]'].includes(url.hostname);
++            if (url.protocol === 'http:' && loopback) link.href = url.href;
++          } catch (_) {}
++        }
++        const applyTheme = (next) => {
++          theme = next;
++          document.documentElement.dataset.boTheme = theme;
++          document.documentElement.style.colorScheme = theme;
++          try { localStorage.setItem('bo-audio-theme', theme); } catch (_) {}
++          if (toggle) {
++            const destination = theme === 'dark' ? 'light' : 'dark';
++            toggle.setAttribute('aria-label', `Switch to ${destination} mode`);
++            toggle.setAttribute('title', `Switch to ${destination} mode`);
++          }
++          if (link) {
++            try { const url = new URL(link.href); url.searchParams.set('theme', theme); link.href = url.href; } catch (_) {}
++          }
++          const current = new URL(window.location.href);
++          if (current.searchParams.get('theme') !== theme) {
++            current.searchParams.set('theme', theme);
++            history.replaceState(history.state, '', current);
++          }
++        };
++        applyTheme(theme);
++        if (toggle) toggle.addEventListener('click', () => applyTheme(theme === 'dark' ? 'light' : 'dark'));
++    """
++    with gr.Blocks(title="Bureau Obscura Audio Fabricator — Sound") as demo:
++        gr.HTML(_header, js_on_load=_header_js)
+         gr.Markdown(
+-            "# SA3 TFLite — portable CPU (XNNPACK)\n"
+-            "Text-to-audio, CFG + negative prompt, audio-to-audio, inpainting, LoRA. "
+-            "Pick a precision (fp32 / w16a32 / w8a32 / w8a8-dyn). First use of a "
+-            "model/precision loads weights; subsequent runs are cached."
++            "Text-to-audio, negative prompting, audio-to-audio, inpainting, and LoRA. "
++            "The Small SFX model runs locally with XNNPACK; its first generation loads "
++            "the model and later runs reuse the cache."
+         )
+         st = gr.State({"current": None, "queued": None, "history": []})
+         with gr.Row():
+@@ -1255,7 +1445,7 @@ def build_ui(initial_dit: str, initial_decoder: str, initial_precision: str, *,
+         )
+ 
+     # gradio 6 moved `css` from the Blocks constructor to launch().
+-    demo.queue(max_size=16).launch(share=share, server_name="0.0.0.0",
++    demo.queue(max_size=16).launch(share=share, server_name="127.0.0.1",
+                                    server_port=server_port, css=_css,
+                                    allowed_paths=[str(OUTPUT_DIR)],
+                                    prevent_thread_lock=False, show_error=True)

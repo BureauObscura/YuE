@@ -20,6 +20,10 @@ async function until(fn){for(let i=0;i<100;i++){const value=await fn();if(value)
  const name='Midnight window · interface test '+Date.now();let track;
  try {
   await page.goto(base);await page.getByRole('heading',{name:'A new composition',exact:true}).waitFor();
+  assert.equal(await page.title(),'Bureau Obscura Audio Fabricator');
+  await page.getByRole('img',{name:'Bureau Obscura',exact:true}).waitFor();
+  assert.equal(await page.getByRole('button',{name:'Music',exact:true}).getAttribute('aria-pressed'),'true');
+  assert.equal(await page.getByRole('button',{name:'Sound',exact:true}).getAttribute('aria-pressed'),'false');
   await page.screenshot({path:path.join(output,'01-composer.png'),fullPage:true});
   await page.getByLabel('Song title',{exact:true}).fill(name);
   await page.getByLabel('Artist name',{exact:true}).fill('UI validation');
@@ -30,6 +34,14 @@ async function until(fn){for(let i=0;i<100;i++){const value=await fn();if(value)
   await page.locator('input[type=file]').nth(0).setInputFiles({name:'test-tone.wav',mimeType:'audio/wav',buffer:wav()});
   track=await until(async()=>{const t=(await state()).tracks.find(t=>t.id===track.id);return t?.takes.some(t=>t.audio_url)?t:null;});
   assert.equal(track.takes.length,1);assert.equal(track.takes[0].status,'complete');
+  await page.getByText('Generation settings',{exact:true}).click();
+  await page.getByRole('checkbox',{name:/Instrumental \/ no vocals/}).check();
+  await page.getByLabel('Approximate duration').selectOption('60');
+  await page.getByLabel('Generation mode').selectOption('remix');
+  await page.getByLabel('Reference recording').selectOption(track.takes[0].id);
+  await page.getByLabel('Remix / extension direction').fill('Turn the saved score into a sparse nocturnal arrangement.');
+  track=await until(async()=>{const t=(await state()).tracks.find(t=>t.id===track.id);return t?.instrumental&&t.target_duration_seconds===60&&t.operation==='remix'&&t.reference_take_id===track.takes[0].id?t:null;});
+  await page.screenshot({path:path.join(output,'02-generation-settings.png'),fullPage:true});
   await page.getByRole('button',{name:'Play',exact:true}).click();
   await until(()=>page.locator('audio').evaluate(a=>a.currentTime>.2));
   await page.getByRole('button',{name:'Pause',exact:true}).click();
@@ -37,6 +49,9 @@ async function until(fn){for(let i=0;i<100;i++){const value=await fn();if(value)
   await page.locator('input[type=file]').nth(1).setInputFiles({name:'test-cover.png',mimeType:'image/png',buffer:png});
   track=await until(async()=>{const t=(await state()).tracks.find(t=>t.id===track.id);return t?.cover_url?t:null;});
   const downloadPromise=page.waitForEvent('download');await page.getByRole('link',{name:'Export selected take & artwork'}).click();const download=await downloadPromise;await download.saveAs(path.join(output,'test-export.zip'));
+  const wavPromise=page.waitForEvent('download');await page.getByRole('link',{name:'WAV',exact:true}).click();const wavDownload=await wavPromise;await wavDownload.saveAs(path.join(output,'test-export.wav'));
+  const mp3Promise=page.waitForEvent('download');await page.getByRole('link',{name:'MP3',exact:true}).click();const mp3Download=await mp3Promise;await mp3Download.saveAs(path.join(output,'test-export.mp3'));
+  assert.ok(fs.statSync(path.join(output,'test-export.wav')).size>44);assert.ok(fs.statSync(path.join(output,'test-export.mp3')).size>44);
   await page.getByRole('button',{name:'Open settings',exact:true}).click();await page.getByRole('dialog',{name:'Music engine'}).waitFor();
   await page.getByLabel('Python executable',{exact:true}).fill(path.join(output,'missing-python.exe'));await page.getByRole('button',{name:'Save & check connection',exact:true}).click();await page.getByText('Setup required',{exact:true}).waitFor();await page.getByRole('button',{name:'Close dialog'}).click();
   await page.getByRole('button',{name:'Generate take',exact:true}).first().click();await page.getByRole('dialog',{name:'Music engine'}).waitFor();
@@ -60,7 +75,7 @@ async function until(fn){for(let i=0;i<100;i++){const value=await fn();if(value)
   await page.screenshot({path:path.join(output,'03-mobile.png'),fullPage:true});
   const csrf=(await state()).csrf;const deleted=await page.request.delete(`${base}/api/tracks/${track.id}`,{headers:{'X-Studio-Token':csrf}});assert.equal(deleted.status(),200);track=null;
   assert.deepEqual(errors,[]);
-  console.log(JSON.stringify({passed:true,checks:['draft autosave','audio import','real playback','cover upload','ZIP export','missing engine state','paid artwork disabled without key','library search','favorites','reload persistence','mobile overflow','no page errors'],output}));
+  console.log(JSON.stringify({passed:true,checks:['draft autosave','audio import','instrumental toggle','approximate duration','score remix reference','real playback','cover upload','ZIP export','WAV export','MP3 export','missing engine state','paid artwork disabled without key','library search','favorites','reload persistence','mobile overflow','no page errors'],output}));
  } finally {
   if(track){const s=await state();await page.request.delete(`${base}/api/tracks/${track.id}`,{headers:{'X-Studio-Token':s.csrf}}).catch(()=>{});}
   await browser.close();

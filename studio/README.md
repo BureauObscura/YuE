@@ -61,6 +61,19 @@ The browser fallback is **`studio/Launch YuE Studio.command`**. It uses built we
 
 Imported recordings are identified as imports in exported metadata. The decorative record sleeve in an empty project is a placeholder, not generated cover art. There are no demo songs or fabricated generation results in the library.
 
+## Instrumentals, duration, remix, and delivery
+
+Open **Generation settings** on a composition to use the local arrangement controls:
+
+- **Instrumental / no vocals** runs the supported symbolic two-stage workflow: Studio plans or accepts an ABC score, moves every sounding `Vocal` note into the instrumental voice, then renders the converted score with empty lyrics and explicit no-vocal direction. A score planning mode is required. This removes the written vocal part; it cannot prove that the rendered timbre contains no voice-like leakage, so listen to the result before delivery.
+- **Approximate duration** offers Auto, 30, 60, 90, 120, and 180 seconds. A target sets the semantic codec window to 80–120 percent of the chosen time at 25 tokens per second and asks for a natural ending near the target. The model may end after the minimum or reach the maximum and truncate. This control is a target and cap, not an exact-duration edit.
+- **Score-conditioned remix** rerenders a complete recording from an ABC score. A prior YuE take can supply its saved score; changing the style, lyrics, score, and remix direction creates a new take while the reference recording remains unchanged.
+- **Extend an edited score** requires adding the continuation to the reference ABC in the Score tab, then renders that whole extended score as a new recording. YuE2 does not continue from an audio timestamp, preserve waveform regions, inpaint a section, or clone a singer.
+
+Imported audio remains fully local, but raw audio by itself is not a YuE2 conditioning input. Covering or remixing an arbitrary recording first requires an audio-to-ABC transcription stage such as SheetSage2; that separate runtime and its models are not installed by Studio. Paste a reviewed ABC score before generating from an imported reference.
+
+The selected take can be downloaded as the complete ZIP package, WAV, or MP3. Conversion runs through the installed local FFmpeg process and never uploads audio. Existing WAV/MP3 files are copied unchanged when their requested format already matches; other sources use 24-bit PCM WAV or 320 kbps MP3. The retained original recording is never modified. Generated packages also retain `studio-context.json` and, for instrumental runs, `instrumental-transfer.json` when present.
+
 ## Connect the music engine
 
 Open **Music engine** from the sidebar or settings button. Select the Python interpreter from your YuE environment, device, memory budget, and the locations or cached Hugging Face IDs for the model and decoder.
@@ -154,6 +167,6 @@ cd studio/web && npm run build
 
 The browser smoke test in `studio/tests/ui-smoke.cjs` uses an isolated library, a synthetic test tone, and a tiny test image. Set `PLAYWRIGHT_MODULE` to an installed Playwright module path when it is not available in the default Node module search path. Never run that script against a personal production library.
 
-Backend tests cover persistence, immutable inputs, upload signatures, path containment, session/origin validation, byte ranges, queue cancellation, failed workers, export integrity, artwork provenance, and mocked provider handling. They do not download model weights or submit paid generations.
+Backend tests cover persistence, immutable inputs, upload signatures, path containment, session/origin validation, byte ranges, queue cancellation, failed workers, instrumental request freezing, approximate-duration bounds, score-reference guards, WAV/MP3 delivery, export integrity, artwork provenance, and mocked provider handling. They do not download model weights or submit paid generations.
 
-Full YuE song generation on Apple silicon and a live BFL image request remain unverified. Windows runtime, CUDA, launcher, and browser workflow results are recorded in [VALIDATION.md](VALIDATION.md). Code and model licensing remain subject to the repository's CC BY-NC 4.0 terms and third-party notices.
+Full YuE song generation on Apple silicon and a live BFL image request remain unverified. Windows runtime, CUDA, launcher, and browser workflow results are recorded in [VALIDATION.md](VALIDATION.md). YuE2 code, agent skill, and documentation are Apache 2.0. Model weights are CC BY-NC 4.0 with the repository's additional creator permission; companies should contact the authors for a commercial model-weight license. Third-party components retain their own notices.

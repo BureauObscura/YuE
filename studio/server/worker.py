@@ -103,6 +103,24 @@ def check(settings):
     return result
 
 
+def duration_sampling(seconds):
+    """Translate Studio's approximate target into honest 25 Hz codec-token bounds."""
+    if seconds is None:
+        return None
+    if seconds not in {30, 60, 90, 120, 180}:
+        raise ValueError("Unsupported target duration")
+    return {"min_tokens": max(200, round(seconds * 25 * .8)),
+            "max_tokens": min(9000, round(seconds * 25 * 1.2))}
+
+
+def instrumental_score(text, keep_chords=True):
+    scripts = Path(__file__).resolve().parents[2] / "skills" / "yue2-music" / "instrumental" / "scripts"
+    if str(scripts) not in sys.path:
+        sys.path.insert(0, str(scripts))
+    from instrumentalize import convert_score
+    return convert_score(text, keep_chords=keep_chords)
+
+
 def run(settings, request, output):
     os.environ["HF_HUB_OFFLINE"] = "1"
     os.environ["TRANSFORMERS_OFFLINE"] = "1"
@@ -122,6 +140,10 @@ def run(settings, request, output):
 
     signal.signal(signal.SIGTERM, stop)
     signal.signal(signal.SIGINT, stop)
+    request = dict(request)
+    studio = request.pop("_studio", {})
+    if not isinstance(studio, dict):
+        raise ValueError("Invalid Studio generation context")
     request = SongRequest(**request)
     output = Path(output)
     if output.exists() and any(output.iterdir()):
@@ -134,14 +156,29 @@ def run(settings, request, output):
                                       local_files_only=True, device=report["device"],
                                       memory_budget_gib=settings["memory_budget_gib"], progress=False)
     try:
-        cfg = pipe.effective_config(request)
-        ident = identity({"request": request.to_dict(), "config": cfg, "weights": pipe.weights})
         emit(stage="Planning score")
         plan = pipe.plan(request=request, cancelled=lambda: cancelled)
+        if studio.get("instrumental"):
+            if plan.abc is None:
+                raise ValueError("Instrumental mode requires a symbolic score plan")
+            emit(stage="Removing the vocal voice")
+            converted, transfer = instrumental_score(plan.abc, keep_chords=request.cot == "full")
+            request = SongRequest(style=request.style, lyrics="", cot=request.cot, seed=request.seed,
+                                  abc=converted, cfg_scale=request.cfg_scale, id=request.id)
+            plan = pipe.plan(request=request, cancelled=lambda: cancelled)
+            (output.parent / "instrumental-transfer.json").write_text(
+                json.dumps(transfer, ensure_ascii=False, indent=2), encoding="utf-8")
+        semantic_sampling = duration_sampling(studio.get("target_duration_seconds"))
+        if semantic_sampling:
+            studio["semantic_token_bounds"] = semantic_sampling
+        cfg = pipe.effective_config(request, semantic_sampling=semantic_sampling)
+        ident = identity({"request": request.to_dict(), "config": cfg, "weights": pipe.weights})
+        (output.parent / "studio-context.json").write_text(
+            json.dumps(studio, ensure_ascii=False, indent=2), encoding="utf-8")
         # A checkpoint remains available after later-stage failure, separate from completed artifacts.
         plan.save(output.parent / "score-checkpoint")
         emit(stage="Generating song")
-        semantic = pipe.generate_semantic(plan, cancelled=lambda: cancelled)
+        semantic = pipe.generate_semantic(plan, sampling=semantic_sampling, cancelled=lambda: cancelled)
         emit(stage="Synthesizing audio")
         nar_started = time.perf_counter()
         latents = pipe.synthesize(semantic, cancelled=lambda: cancelled)

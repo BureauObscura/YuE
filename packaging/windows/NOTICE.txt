@@ -1,0 +1,21 @@
+Bureau Obscura Audio Fabricator
+Copyright (c) 2026 Bureau Obscura.
+
+YuE2 source code is licensed under the Apache License 2.0. YuE2 model
+weights are separately licensed under CC BY-NC 4.0 with the additional
+individual-creator permission included in MODEL_LICENSE. The model weights
+may not be used or redistributed commercially by companies without a
+separate license from the YuE2 licensors.
+
+This Stability AI Model is licensed under the Stability AI Community License,
+Copyright © Stability AI Ltd. All Rights Reserved.
+
+Powered by Stability AI.
+
+Gemma is provided under and subject to the Gemma Terms of Use found at
+ai.google.dev/gemma/terms
+
+Stable Audio 3 model files in this distribution are unmodified optimized
+checkpoints from stabilityai/stable-audio-3-optimized. The application source
+contains interface and launcher integration changes; it does not modify the
+model weights.

@@ -23,7 +23,10 @@ import wave
 ACTIVE = {"queued", "running"}
 ID = re.compile(r"[a-f0-9]{32}\Z")
 TEXT_LIMITS = {"title": 240, "artist": 240, "album": 240, "style": 6000,
-               "lyrics": 60000, "abc": 120000, "cover_prompt": 12000}
+               "lyrics": 60000, "abc": 120000, "cover_prompt": 12000,
+               "edit_direction": 4000}
+TARGET_DURATIONS = {30, 60, 90, 120, 180}
+OPERATIONS = {"new", "remix", "extend"}
 
 
 class StudioError(Exception):
@@ -165,6 +168,11 @@ class Store:
                             take.update(status="failed", stage="Interrupted", error="Studio stopped before this take finished. Generate a new take to retry.")
                     if track.get("cover_status") in {"queued", "running"}:
                         track.update(cover_status="failed", cover_error="Studio stopped during artwork generation. Try again.")
+                    track.setdefault("instrumental", False)
+                    track.setdefault("target_duration_seconds", None)
+                    track.setdefault("operation", "new")
+                    track.setdefault("reference_take_id", None)
+                    track.setdefault("edit_direction", "")
             except (ValueError, TypeError, KeyError) as exc:
                 raise RuntimeError(f"Cannot read Studio library at {self.path}. The original file was preserved: {exc}") from exc
         else:
@@ -235,7 +243,9 @@ class Store:
             return self.public(self._track(track_id))
 
     def _validate_draft(self, fields, track):
-        if not isinstance(fields, dict) or set(fields) - set(TEXT_LIMITS) - {"cot", "seed", "favorite", "selected_take_id"}:
+        extra = {"cot", "seed", "favorite", "selected_take_id", "instrumental",
+                 "target_duration_seconds", "operation", "reference_take_id"}
+        if not isinstance(fields, dict) or set(fields) - set(TEXT_LIMITS) - extra:
             raise StudioError("Unknown or immutable track fields.")
         result = dict(fields)
         for key, limit in TEXT_LIMITS.items():
@@ -247,6 +257,14 @@ class Store:
             raise StudioError("Seed must be a nonnegative integer below 2^53, or empty for random.")
         if "favorite" in result and type(result["favorite"]) is not bool:
             raise StudioError("Favorite must be true or false.")
+        if "instrumental" in result and type(result["instrumental"]) is not bool:
+            raise StudioError("Instrumental must be true or false.")
+        if "target_duration_seconds" in result and result["target_duration_seconds"] not in TARGET_DURATIONS | {None}:
+            raise StudioError("Choose an approximate duration of 30, 60, 90, 120, or 180 seconds, or Auto.")
+        if "operation" in result and result["operation"] not in OPERATIONS:
+            raise StudioError("Generation mode must be new, remix, or extend.")
+        if result.get("reference_take_id") is not None:
+            self._take(track, result["reference_take_id"])
         if result.get("selected_take_id") is not None:
             self._take(track, result["selected_take_id"])
         return result
@@ -255,9 +273,11 @@ class Store:
         with self.lock:
             track_id, stamp = secrets.token_hex(16), now()
             track = {"id": track_id, "title": "Untitled track", "artist": "", "album": "", "style": "", "lyrics": "",
-                     "cot": "full", "seed": None, "abc": "", "cover_prompt": "", "cover_url": None,
-                     "cover_status": "empty", "cover_error": None, "favorite": False, "created_at": stamp,
-                     "updated_at": stamp, "selected_take_id": None, "takes": []}
+                      "cot": "full", "seed": None, "abc": "", "cover_prompt": "", "cover_url": None,
+                      "cover_status": "empty", "cover_error": None, "favorite": False, "created_at": stamp,
+                      "updated_at": stamp, "selected_take_id": None, "takes": [], "instrumental": False,
+                      "target_duration_seconds": None, "operation": "new", "reference_take_id": None,
+                      "edit_direction": ""}
             track.update(self._validate_draft(fields, track))
             self.state["tracks"][track_id] = track
             self.save()
@@ -290,15 +310,73 @@ class Store:
             raise StudioError("Invalid artifact path.")
         return path
 
+    def take_score(self, track_id, take_id):
+        with self.lock:
+            self._take(self._track(track_id), take_id)
+            path = self.take_dir(track_id, take_id) / "artifacts" / "score.abc"
+            if path.is_symlink() or not path.is_file():
+                raise StudioError("This reference has no YuE score. Import or paste an ABC score before remixing it.", 409)
+            text = path.read_text(encoding="utf-8")
+            if not text.strip() or len(text) > TEXT_LIMITS["abc"]:
+                raise StudioError("The saved reference score is unavailable or invalid.", 409)
+            return text
+
     def new_take(self, track_id, status="queued", imported=False):
         with self.lock:
             track = self._track(track_id)
             request = {k: track[k] for k in ("style", "lyrics", "cot", "seed", "abc")}
             if not imported:
-                if not request["style"].strip() or not request["lyrics"].strip():
-                    raise StudioError("Add a musical style and lyrics before generating.")
+                instrumental = track["instrumental"]
+                operation = track["operation"]
+                if not request["style"].strip() or (not instrumental and not request["lyrics"].strip()):
+                    raise StudioError("Add a musical style and lyrics before generating, or enable Instrumental / no vocals.")
+                if instrumental and request["cot"] == "off":
+                    raise StudioError("Instrumental mode needs Melody or Melody & chords planning so Studio can remove the vocal voice.")
                 if request["cot"] == "off" and request["abc"].strip():
                     raise StudioError("Choose a score mode to use your ABC score, or clear the score.")
+                reference = None
+                source_score = None
+                if operation != "new":
+                    if not track["reference_take_id"]:
+                        raise StudioError("Choose a completed local recording as the remix reference.")
+                    reference = self._take(track, track["reference_take_id"])
+                    if reference["status"] not in {"complete", "needs_review"} or not reference.get("_audio"):
+                        raise StudioError("The remix reference must be a completed local recording.", 409)
+                    score_path = self.take_dir(track_id, reference["id"]) / "artifacts" / "score.abc"
+                    if score_path.is_file() and not score_path.is_symlink():
+                        source_score = score_path.read_text(encoding="utf-8")
+                    if operation == "remix" and not request["abc"].strip() and source_score:
+                        request["abc"] = source_score
+                    if not request["abc"].strip():
+                        raise StudioError("Raw audio is stored locally, but YuE2 cannot condition on it directly. Import or paste its ABC score to remix it.", 409)
+                    if operation == "extend" and source_score and request["abc"].strip() == source_score.strip():
+                        raise StudioError("Extend the reference score in the Score tab before generating. YuE2 cannot continue directly from audio.", 409)
+                    if request["cot"] == "off":
+                        raise StudioError("Score-guided remix and extension require Melody or Melody & chords planning.")
+                # A saved remix note must not silently change a later, unrelated
+                # composition after the user switches the mode back to New.
+                direction = track["edit_direction"].strip() if operation != "new" else ""
+                additions = []
+                if instrumental:
+                    additions.append("Instrumental only: no singing, spoken word, vocal chops, choir, or other vocal sounds.")
+                    if not request["lyrics"].strip():
+                        request["lyrics"] = "[Intro]\n\n[Verse]\n\n[Outro]\n"
+                if track["target_duration_seconds"]:
+                    additions.append(f"Aim for a complete form with a natural ending near {track['target_duration_seconds']} seconds.")
+                if operation == "remix":
+                    additions.append("Render a score-conditioned remix of the supplied composition.")
+                elif operation == "extend":
+                    additions.append("Render the supplied user-extended score as one complete recording.")
+                if direction:
+                    additions.append("Edit direction: " + direction)
+                if additions:
+                    request["style"] = request["style"].rstrip() + "\n" + " ".join(additions)
+                studio = {"instrumental": instrumental, "target_duration_seconds": track["target_duration_seconds"],
+                          "operation": operation, "edit_direction": direction, "reference_take_id": track["reference_take_id"]}
+                if reference:
+                    studio["reference"] = {"take_id": reference["id"], "audio_sha256": reference.get("_sha256"),
+                                           "duration": reference.get("duration"), "source": reference.get("_source")}
+                request["_studio"] = studio
             request["abc"] = request["abc"] if request["abc"].strip() else None
             request["seed"] = request["seed"] if request["seed"] is not None else secrets.randbelow(2**32)
             take_id = secrets.token_hex(16)
